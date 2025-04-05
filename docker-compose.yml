@@ -1,0 +1,154 @@
+version: "3.8" # Use an appropriate version
+
+services:
+  # NestJS Application Service
+  app:
+    container_name: nestjs_app
+    build:
+      context: ./server # Specify the build context (directory containing Dockerfile)
+      dockerfile: Dockerfile
+    ports:
+      # Map host port 3000 to container port 3000 (matching PORT env var below)
+      - "3000:3000"
+    # Change: Define environment variables directly here instead of using env_file
+    environment:
+      NODE_ENV: development # Or production
+      PORT: 3000 # Port the NestJS application listens on inside the container
+
+      # === PostgreSQL Config ===
+      POSTGRES_HOST: postgres_db # Postgres service name defined below
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: myuser_compose # Hardcoded value
+      POSTGRES_PASSWORD: mypassword_compose # Hardcoded value - WARNING: Insecure for production
+      POSTGRES_DB: mydatabase_compose # Hardcoded value
+
+      # Construct URI in app.module or pass components:
+      MONGO_REPLICA_URI_NODES: "mongo1:27017,mongo2:27017,mongo3:27017" # List all mongo nodes/ports
+      MONGO_REPLICA_SET_NAME: "rs0" # Must match _id in mongo-init.sh and --replSet arg
+      MONGO_DB_NAME: ${MONGO_DB_NAME:-mymongodb}
+      # Credentials (use .env or secrets for production!)
+      MONGO_USER: ${MONGO_USER:-root} # App user for Mongo (might differ from root)
+      MONGO_PASS: ${MONGO_PASS:-password} # App user password
+      MONGO_AUTH_SOURCE: ${MONGO_AUTH_SOURCE:-admin} # DB to auth against
+
+    depends_on:
+      mongo1: # Depends on MongoDB nodes being started
+        condition: service_started
+      mongo2:
+        condition: service_started
+      mongo3:
+        condition: service_started
+      mongo-init: # Depends on the init script finishing (or failing)
+        condition: service_completed_successfully
+
+    volumes:
+      - ./server:/usr/src/app
+    networks:
+      - app_network # Connect to the shared network
+
+  # PostgreSQL Service
+  postgres_db:
+    container_name: postgres_db
+    image: postgres:15-alpine # Use official postgres image
+    # Change: Use hardcoded values
+    environment:
+      POSTGRES_USER: myuser_compose # Hardcoded value (should match app service)
+      POSTGRES_PASSWORD: mypassword_compose # Hardcoded value (should match app service) - WARNING: Insecure
+      POSTGRES_DB: mydatabase_compose # Hardcoded value (should match app service)
+    ports:
+      # Only map port externally if direct access from the host is needed (e.g., for debugging)
+      - "5433:5432" # Example: Map container port 5432 to host port 5433
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persistent data for postgres
+    networks:
+      - app_network
+
+  # === MongoDB Replica Set Nodes ===
+  mongo1:
+    image: mongo:6
+    container_name: mongo1
+    command: mongod --replSet rs0 --bind_ip_all # Start with replica set option
+    # ports: # Expose only if needed for external debugging
+    #   - "27017:27017"
+    volumes:
+      - mongo1_data:/data/db
+    # environment: # For initial root user creation (optional but recommended)
+      # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
+    networks:
+      - app_network
+    healthcheck: # Basic healthcheck
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  mongo2:
+    image: mongo:6
+    container_name: mongo2
+    command: mongod --replSet rs0 --bind_ip_all
+    # ports:
+    #   - "27018:27017"
+    volumes:
+      - mongo2_data:/data/db
+    # environment:
+      # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
+    networks:
+      - app_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  mongo3:
+    image: mongo:6
+    container_name: mongo3
+    command: mongod --replSet rs0 --bind_ip_all
+    # ports:
+    #   - "27019:27017"
+    volumes:
+      - mongo3_data:/data/db
+    # environment:
+      # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
+    networks:
+      - app_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # === MongoDB Initializer Service ===
+  mongo-init:
+    image: mongo:6 # Use the same mongo image which has the client tools
+    container_name: mongo-init-replica
+    depends_on: # Wait for nodes to likely be started based on healthcheck
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+    volumes:
+      - ./devops/mongo/mongo-init.sh:/scripts/mongo-init.sh # Mount the init script
+    entrypoint: ["/bin/bash", "/scripts/mongo-init.sh"] # Run the script
+    networks:
+      - app_network
+
+# Volumes for persistent data storage
+volumes:
+  postgres_data:
+  mongo1_data:
+  mongo2_data:
+  mongo3_data:
+
+# Network for inter-container communication
+networks:
+  app_network:
+    driver: bridge
