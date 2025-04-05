@@ -4,11 +4,16 @@ import { TerminusModule } from '@nestjs/terminus';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MongooseModule, MongooseModuleFactoryOptions } from '@nestjs/mongoose';
-
+import { AppService } from './app.service';
+import {
+  PrometheusModule,
+  makeCounterProvider,
+  makeHistogramProvider,
+} from '@willsoto/nestjs-prometheus';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // Make ConfigModule global
+      isGlobal: true,
     }),
 
     TerminusModule,
@@ -23,42 +28,47 @@ import { MongooseModule, MongooseModuleFactoryOptions } from '@nestjs/mongoose';
         username: configService.get<string>('POSTGRES_USER'),
         password: configService.get<string>('POSTGRES_PASSWORD'),
         database: configService.get<string>('POSTGRES_DB'),
-        // Important: Never use synchronize: true in production
-        synchronize: false, // Should only be true during development
-        autoLoadEntities: true, // Automatically load entities (if any)
-        logging: configService.get<string>('NODE_ENV') === 'development', // Log SQL queries during development
+        synchronize: false,
+        autoLoadEntities: true,
+        logging: configService.get<string>('NODE_ENV') === 'development',
       }),
     }),
 
-    // 4. Mongoose Module for MongoDB
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (
         configService: ConfigService,
       ): MongooseModuleFactoryOptions => {
-        // Get necessary config values (NO user/pass/authSource needed)
-        const nodes = configService.get<string>('MONGO_REPLICA_URI_NODES'); // e.g., "mongo1:27017,mongo2:27017"
+        const nodes = configService.get<string>('MONGO_REPLICA_URI_NODES');
         const dbName = configService.get<string>('MONGO_DB_NAME');
         const replicaSet = configService.get<string>('MONGO_REPLICA_SET_NAME');
 
-        // Construct the Replica Set URI WITHOUT authentication part
         const uri = `mongodb://${nodes}/${dbName}?replicaSet=${replicaSet}`;
 
         console.log('MongoDB Replica Set URI (No Auth):', uri); // Debug URI
 
         return {
           uri: uri,
-          // You can still specify read preference
           readPreference: 'secondaryPreferred',
-          // Other Mongoose options if needed
         };
       },
     }),
+
+    PrometheusModule.register(),
   ],
   controllers: [AppController],
-  // Remove AppService if getHello is removed from AppController
-  // providers: [AppService],
-  providers: [], // Provide AppService if needed elsewhere, otherwise empty
+  providers: [
+    AppService, 
+    makeCounterProvider({
+      name: 'fibonacci_requests_total',
+      help: 'Total number of requests to the /cpu-load endpoint',
+    }),
+    makeHistogramProvider({
+      name: 'fibonacci_calculation_duration_seconds',
+      help: 'Duration of Fibonacci calculation in seconds',
+      buckets: [0.1, 0.5, 1, 5, 10, 30, 60], 
+    }),
+  ],
 })
 export class AppModule {}

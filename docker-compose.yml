@@ -1,65 +1,59 @@
 version: "3.8" # Use an appropriate version
 
 services:
-  # NestJS Application Service
   app:
     container_name: nestjs_app
     build:
-      context: ./server # Specify the build context (directory containing Dockerfile)
+      context: ./server
       dockerfile: Dockerfile
     ports:
-      # Map host port 3000 to container port 3000 (matching PORT env var below)
       - "3000:3000"
-    # Change: Define environment variables directly here instead of using env_file
     environment:
-      NODE_ENV: development # Or production
-      PORT: 3000 # Port the NestJS application listens on inside the container
+      NODE_ENV: development
+      PORT: 3000
 
       # === PostgreSQL Config ===
-      POSTGRES_HOST: postgres_db # Postgres service name defined below
+      POSTGRES_HOST: postgres_db
       POSTGRES_PORT: 5432
-      POSTGRES_USER: myuser_compose # Hardcoded value
-      POSTGRES_PASSWORD: mypassword_compose # Hardcoded value - WARNING: Insecure for production
-      POSTGRES_DB: mydatabase_compose # Hardcoded value
+      POSTGRES_USER: myuser_compose
+      POSTGRES_PASSWORD: mypassword_compose
+      POSTGRES_DB: mydatabase_compose
 
-      # Construct URI in app.module or pass components:
-      MONGO_REPLICA_URI_NODES: "mongo1:27017,mongo2:27017,mongo3:27017" # List all mongo nodes/ports
+      MONGO_REPLICA_URI_NODES: "mongo1:27017,mongo2:27017,mongo3:27017"
       MONGO_REPLICA_SET_NAME: "rs0" # Must match _id in mongo-init.sh and --replSet arg
-      MONGO_DB_NAME: ${MONGO_DB_NAME:-mymongodb}
-      # Credentials (use .env or secrets for production!)
-      MONGO_USER: ${MONGO_USER:-root} # App user for Mongo (might differ from root)
-      MONGO_PASS: ${MONGO_PASS:-password} # App user password
-      MONGO_AUTH_SOURCE: ${MONGO_AUTH_SOURCE:-admin} # DB to auth against
+      # MONGO_DB_NAME: ${MONGO_DB_NAME:-mymongodb}
+
+      # MONGO_USER: ${MONGO_USER:-root} # App user for Mongo (might differ from root)
+      # MONGO_PASS: ${MONGO_PASS:-password} # App user password
+      # MONGO_AUTH_SOURCE: ${MONGO_AUTH_SOURCE:-admin} # DB to auth against
 
     depends_on:
-      mongo1: # Depends on MongoDB nodes being started
+      mongo1:
         condition: service_started
       mongo2:
         condition: service_started
       mongo3:
         condition: service_started
-      mongo-init: # Depends on the init script finishing (or failing)
-        condition: service_completed_successfully
+      # mongo-init:
+      #   condition: service_completed_successfully
 
     volumes:
       - ./server:/usr/src/app
     networks:
-      - app_network # Connect to the shared network
+      - app_network
 
   # PostgreSQL Service
   postgres_db:
     container_name: postgres_db
-    image: postgres:15-alpine # Use official postgres image
-    # Change: Use hardcoded values
+    image: postgres:15-alpine
     environment:
-      POSTGRES_USER: myuser_compose # Hardcoded value (should match app service)
-      POSTGRES_PASSWORD: mypassword_compose # Hardcoded value (should match app service) - WARNING: Insecure
-      POSTGRES_DB: mydatabase_compose # Hardcoded value (should match app service)
+      POSTGRES_USER: myuser_compose
+      POSTGRES_PASSWORD: mypassword_compose
+      POSTGRES_DB: mydatabase_compose
     ports:
-      # Only map port externally if direct access from the host is needed (e.g., for debugging)
-      - "5433:5432" # Example: Map container port 5432 to host port 5433
+      - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data # Persistent data for postgres
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - app_network
 
@@ -67,14 +61,14 @@ services:
   mongo1:
     image: mongo:6
     container_name: mongo1
-    command: mongod --replSet rs0 --bind_ip_all # Start with replica set option
-    # ports: # Expose only if needed for external debugging
+    command: mongod --replSet rs0 --bind_ip_all
+    # ports:
     #   - "27017:27017"
     volumes:
       - mongo1_data:/data/db
-    # environment: # For initial root user creation (optional but recommended)
-      # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
-      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
+    # environment:
+    # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+    # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
     networks:
       - app_network
     healthcheck: # Basic healthcheck
@@ -93,8 +87,8 @@ services:
     volumes:
       - mongo2_data:/data/db
     # environment:
-      # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
-      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
+    # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+    # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
     networks:
       - app_network
     healthcheck:
@@ -113,8 +107,8 @@ services:
     volumes:
       - mongo3_data:/data/db
     # environment:
-      # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
-      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
+    # MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+    # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-password}
     networks:
       - app_network
     healthcheck:
@@ -126,9 +120,9 @@ services:
 
   # === MongoDB Initializer Service ===
   mongo-init:
-    image: mongo:6 # Use the same mongo image which has the client tools
+    image: mongo:6
     container_name: mongo-init-replica
-    depends_on: # Wait for nodes to likely be started based on healthcheck
+    depends_on:
       mongo1:
         condition: service_healthy
       mongo2:
@@ -136,17 +130,55 @@ services:
       mongo3:
         condition: service_healthy
     volumes:
-      - ./devops/mongo/mongo-init.sh:/scripts/mongo-init.sh # Mount the init script
-    entrypoint: ["/bin/bash", "/scripts/mongo-init.sh"] # Run the script
+      - ./devops/mongo/mongo-init.sh:/scripts/mongo-init.sh
+    entrypoint: ["/bin/bash", "/scripts/mongo-init.sh"]
     networks:
       - app_network
 
+  # === Monitoring Services ===
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: prometheus
+    volumes:
+      - ./devops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    networks:
+      - app_network
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:9.5.3
+    container_name: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./devops/grafana/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      # GF_SECURITY_ADMIN_PASSWORD: your_secure_password
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    ports:
+      - "3001:3000"
+    networks:
+      - app_network
+    depends_on:
+      - prometheus
+
 # Volumes for persistent data storage
 volumes:
-  postgres_data:
-  mongo1_data:
-  mongo2_data:
-  mongo3_data:
+  postgres_data: {}
+  mongo1_data: {}
+  mongo2_data: {}
+  mongo3_data: {}
+  prometheus_data: {}
+  grafana_data: {}
 
 # Network for inter-container communication
 networks:
