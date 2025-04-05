@@ -1,0 +1,51 @@
+# receivers define how data gets into the collector
+receivers:
+  otlp: # OpenTelemetry Line Protocol receiver
+    protocols:
+      grpc: # Port 4317 for gRPC (default)
+        endpoint: 0.0.0.0:4317
+      http: # Port 4318 for HTTP (protobuf or json)
+        endpoint: 0.0.0.0:4318
+        # cors: # Optional CORS settings if receiving from browsers
+        #   allowed_origins:
+        #     - "http://*"
+        #     - "https://*"
+
+# processors modify data as it passes through the collector
+processors:
+  batch: {} # Batches data before sending to exporters (recommended)
+  # memory_limiter: # Optional: prevent collector from running out of memory
+  #   check_interval: 1s
+  #   limit_mib: 400
+  #   spike_limit_mib: 100
+
+# exporters define where data goes out from the collector
+exporters:
+  logging: # Exports data to the collector's console log (for debugging)
+    loglevel: debug
+
+  otlp/jaeger: # Exports traces via OTLP to Jaeger
+    endpoint: jaeger:4317 # Send to Jaeger's OTLP gRPC receiver port
+    tls:
+      insecure: true # Set to false if Jaeger uses TLS
+
+  # prometheus: # Optional: Expose metrics for Prometheus to scrape from the collector itself
+  #   endpoint: "0.0.0.0:8889" # Port for Prometheus to scrape
+
+# service defines the pipelines (receivers -> processors -> exporters)
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      # Send traces to Jaeger and also log them
+      exporters: [otlp/jaeger, logging]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      # Log metrics, optionally export to Prometheus endpoint
+      exporters: [logging] # Add 'prometheus' here if using the prometheus exporter above
+    # logs: # Example logs pipeline
+    #   receivers: [otlp]
+    #   processors: [batch]
+    #   exporters: [logging] # Send logs somewhere else (e.g., Loki, Elasticsearch)
